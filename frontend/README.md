@@ -1,32 +1,32 @@
-# React + TypeScript + Vite
+# Urja Grid Explorer frontend
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+This React and TypeScript application provides a browser interface for the meter API in the repository root.
 
-Currently, two official plugins are available:
+## Features
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+- Search meters by meter ID or serial number.
+- Browse paginated results.
+- Open meter details in a dismissible, animated overlay.
+- Review meter identification, network hierarchy, coordinates, and recent readings.
+- Use the interface with reduced-motion preferences and keyboard close controls.
 
-## React Compiler
+## Start the application
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+First configure and run the API from the repository root. Follow the root [README](../README.md) to create `.env` with the portal login.
 
-## Expanding the Oxlint configuration
+Then, in this directory, install dependencies and start Vite:
 
-If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
-
-```json
-{
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "oxc"],
-  "options": {
-    "typeAware": true
-  },
-  "rules": {
-    "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
-}
+```bash
+npm ci
+npm run dev
 ```
 
-See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
+Open the local URL printed by Vite, usually `http://localhost:5173`. The development server proxies `/api` requests to `http://localhost:3000`; the API must be running and configured for live meter data to appear.
+
+## Build
+
+```bash
+npm run build
+```
+
+The production bundle is written to `dist/`. This frontend refresh does not replace or reimplement the backend API.

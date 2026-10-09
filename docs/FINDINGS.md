@@ -1,30 +1,28 @@
-# Investigation findings
+# Project notes
 
-These notes summarize the read-only requests used to shape the API. The polished protocol reference is [PROTOCOL.md](../PROTOCOL.md); implementation details and run instructions are in [README.md](../README.md).
+## Scope of this revision
 
-## Confirmed observations
+This revision replaces the meter explorer's visual layout and rewrites the Markdown documentation. See [PROTOCOL.md](../PROTOCOL.md) for the application's portal integration details and known data caveats.
 
-- The login action expects URL-encoded credentials plus `x-sveltekit-action: true`. It answers with HTTP 200 and a JSON-described 303 redirect, and sets a secure session cookie with a one-hour max age.
-- Meter search is `GET /portal/meters/search?q=...&page=...`. On the observed instance it returned 403 meters, 20 per page, and 100 matches for `j1000`.
-- The detail page's SvelteKit `__data.json` payload carries the nameplate and seven network levels. Legacy records encode nameplate values as label/value pairs; v2 records encode an `installed_meter` JSON object inside `classData`.
-- Location is available from `/portal/meters/{meterId}/geo`; consumption is available from `/portal/meters/{meterId}/energy`.
-- `GET /portal/dts?page=1` returns transformer rows with `code`, `name`, `feederCode`, and `capacityKva`; the observed instance returned 40 rows over two pages.
-- Numeric location and consumption values arrive as strings. Energy timestamps have no timezone marker.
-- Search page 21 returned the three remaining rows. Page 22 returned no rows; invalid page values were normalized to page 1 upstream. The service instead validates client input and forwards valid positive pages.
+The current interface presents a searchable, paginated meter directory and opens each record in an animated details overlay. The overlay shows the nameplate, network hierarchy, location, and recent consumption when the API provides them. The left navigation rail was removed in favor of a compact top header.
 
-## API decisions
+## Runtime configuration
 
-- Keep portal authentication and cookies private to the service.
-- Present one stable nameplate and hierarchy response across both observed meter detail versions.
-- Split hierarchy labels into `{name, code}` when a parenthesized code is present; keep a label intact and use an empty code when it is not.
-- Preserve timestamp strings and convert numeric measurement fields to JSON numbers.
-- Expose transformer inventory because it is a small, paginated read endpoint that helps consumers interpret DT references.
-- Do not call the signed export or signing-key endpoints in this implementation. The core service can meet its use case through search, details, location, energy, and transformer routes.
+The API needs the portal login in the root `.env` file. Without `URJA_EMAIL` and `URJA_PASSWORD`, the API starts but data requests fail during login. `.env` is ignored by Git; `.env.example` contains only placeholders.
 
-## Still unknown
+The frontend sends requests through Vite's `/api` proxy to the local API on port 3000. Start the API and frontend in separate terminals as described in the root README.
 
-- The exact timezone represented by consumption timestamps.
-- Whether a portal session refreshes on use and all status codes used after expiry.
-- Upstream request throttling and long-term availability expectations.
-- Whether hierarchy labels and empty values remain consistent across every meter.
-- The signing algorithm and exact operational contract for the full export path.
+## Verification recorded for this revision
+
+- With the supplied local portal credentials configured, `GET /api/meters?page=1&pageSize=5` returned HTTP 200 and 20 meter rows, with `total: 403`.
+- The frontend dev server returned HTTP 200 for the application and its transformed `App.tsx` module.
+- `cd frontend && npm run build` completed successfully after the UI and documentation changes.
+
+These checks confirm the local development flow at that time. They are not a full re-test of every portal route or a claim that the upstream portal's snapshot data is permanent.
+
+## Known limits
+
+- API behavior should be reviewed against the upstream portal before production use.
+- Live data requires valid portal credentials and an available upstream portal.
+- Consumption timestamps do not carry a confirmed timezone.
+- The upstream API protocol and session behavior can change independently of this project.

@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react';
-import type { ConsumptionReading, MeterDetailResponse, MeterLocation } from '../types/meter';
 import { meterApi } from '../api/meterApi';
+import type { ConsumptionReading, MeterDetailResponse, MeterLocation } from '../types/meter';
 
 interface Props {
   meterId: string;
 }
 
-const hierarchyLevels = [
+const hierarchy = [
   ['zone', 'Zone'],
   ['circle', 'Circle'],
   ['division', 'Division'],
@@ -16,21 +16,27 @@ const hierarchyLevels = [
   ['dt', 'Transformer'],
 ] as const;
 
-const chartPoints = (readings: ConsumptionReading[]): string => {
-  const recent = readings.slice(-48);
-  if (recent.length < 2) return '';
-  const values = recent.map((reading) => reading.kwh);
-  const min = Math.min(...values);
-  const range = Math.max(...values) - min || 1;
-  return values
-    .map((value, index) => `${(index / (values.length - 1)) * 100},${34 - ((value - min) / range) * 28}`)
-    .join(' ');
+const makeChartPoints = (readings: ConsumptionReading[]) => {
+  const sample = readings.slice(-48);
+  if (sample.length < 2) return '';
+  const values = sample.map((reading) => reading.kwh);
+  const minimum = Math.min(...values);
+  const spread = Math.max(...values) - minimum || 1;
+  return values.map((value, index) => {
+    const x = (index / (values.length - 1)) * 100;
+    const y = 34 - ((value - minimum) / spread) * 28;
+    return `${x},${y}`;
+  }).join(' ');
 };
+
+const formatNumber = (value: number | undefined) => value === undefined
+  ? '—'
+  : new Intl.NumberFormat('en', { maximumFractionDigits: 2 }).format(value);
 
 export const MeterDetails = ({ meterId }: Props) => {
   const [detail, setDetail] = useState<MeterDetailResponse['data'] | null>(null);
   const [location, setLocation] = useState<MeterLocation | null>(null);
-  const [consumption, setConsumption] = useState<ConsumptionReading[]>([]);
+  const [readings, setReadings] = useState<ConsumptionReading[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -44,112 +50,117 @@ export const MeterDetails = ({ meterId }: Props) => {
       meterApi.getMeterLocation(meterId),
       meterApi.getMeterConsumption(meterId),
     ])
-      .then(([detailResponse, locationResponse, consumptionResponse]) => {
+      .then(([meterResponse, locationResponse, consumptionResponse]) => {
         if (!active) return;
-        setDetail(detailResponse.data);
+        setDetail(meterResponse.data);
         setLocation(locationResponse.data);
-        setConsumption(consumptionResponse.data);
+        setReadings(consumptionResponse.data);
       })
       .catch(() => {
-        if (active) setError('Meter details could not be loaded. Try again in a moment.');
+        if (active) setError('Details are temporarily unavailable. Close this panel and try again.');
       })
       .finally(() => {
         if (active) setLoading(false);
       });
 
-    return () => {
-      active = false;
-    };
+    return () => { active = false; };
   }, [meterId]);
 
-  if (loading) return <section id="meter-details" className="details-panel" aria-live="polite">Loading meter details…</section>;
-  if (error) return <section id="meter-details" className="details-panel error" role="alert">{error}</section>;
+  if (loading) {
+    return <div className="detail-loading" role="status"><span className="spinner" /> Loading meter record…</div>;
+  }
+  if (error) return <div className="detail-error" role="alert">{error}</div>;
   if (!detail) return null;
 
-  const nameplate = detail.nameplate;
-  const levels = hierarchyLevels.map(([key, label]) => ({
-    label,
-    ...detail.hierarchy[key],
-  }));
-  const latest = consumption.at(-1);
-  const recentReadings = consumption.slice(-12).reverse();
-  const statusClass = nameplate.installStatus.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+  const plate = detail.nameplate;
+  const path = hierarchy.map(([key, label]) => ({ label, ...detail.hierarchy[key] }));
+  const latest = readings.at(-1);
+  const recent = readings.slice(-10).reverse();
+  const statusClass = plate.installStatus.toLowerCase().includes('fault')
+    ? 'status-warning'
+    : plate.installStatus.toLowerCase().includes('decommission')
+      ? 'status-muted'
+      : 'status-good';
 
   return (
-    <section id="meter-details" className="details-panel" aria-labelledby="detail-heading">
-      <div className="detail-heading">
+    <div className="detail-content">
+      <header className="detail-topline">
         <div>
-          <p className="eyebrow">METER RECORD</p>
-          <h2 id="detail-heading">{nameplate.meterId}</h2>
-          <p className="muted">{nameplate.make} · {nameplate.serialNo}</p>
+          <p className="overline">METER PROFILE</p>
+          <h2 id="detail-title">{plate.meterId}</h2>
+          <p className="detail-subtitle">{plate.make} <span>·</span> serial {plate.serialNo}</p>
         </div>
-        <span className={`status-pill status-${statusClass}`}>{nameplate.installStatus}</span>
-      </div>
+        <span className={`status-tag ${statusClass}`}><i aria-hidden="true" />{plate.installStatus}</span>
+      </header>
 
-      <div className="detail-grid">
-        <section className="detail-card">
-          <p className="section-label">NAMEPLATE</p>
-          <dl className="nameplate-grid">
-            <div><dt>Phase</dt><dd>{nameplate.phaseType}</dd></div>
-            <div><dt>Installation</dt><dd>{nameplate.installationType}</dd></div>
+      <section className="profile-grid" aria-label="Meter overview">
+        <article className="profile-card identity-card">
+          <div className="profile-card-title"><span className="card-icon meter-card-icon" aria-hidden="true">M</span><div><p>NAMEPLATE</p><h3>Configuration</h3></div></div>
+          <dl className="spec-list">
+            <div><dt>Phase</dt><dd>{plate.phaseType}</dd></div>
+            <div><dt>Installation type</dt><dd>{plate.installationType}</dd></div>
           </dl>
-        </section>
-        <section className="detail-card">
-          <p className="section-label">LOCATION</p>
+        </article>
+        <article className="profile-card location-card">
+          <div className="profile-card-title"><span className="card-icon pin-card-icon" aria-hidden="true">⌖</span><div><p>LOCATION</p><h3>Coordinates</h3></div></div>
           {location ? (
-            <div className="coordinate-pair">
-              <div><span>LAT</span><strong>{location.latitude.toFixed(6)}</strong></div>
-              <div><span>LON</span><strong>{location.longitude.toFixed(6)}</strong></div>
+            <div className="coordinate-grid">
+              <div><span>LATITUDE</span><strong>{location.latitude.toFixed(5)}</strong></div>
+              <div><span>LONGITUDE</span><strong>{location.longitude.toFixed(5)}</strong></div>
             </div>
-          ) : <p className="muted">Coordinates unavailable.</p>}
-        </section>
-      </div>
+          ) : <p className="unavailable-note">Coordinates were not returned for this meter.</p>}
+        </article>
+      </section>
 
-      <section className="detail-card hierarchy-card">
-        <div className="section-heading">
-          <p className="section-label">NETWORK PATH</p>
-          <span className="muted">7 levels</span>
+      <section className="detail-section network-section" aria-labelledby="network-title">
+        <div className="section-title-line">
+          <div><p className="overline">CONNECTION MAP</p><h3 id="network-title">Network path</h3></div>
+          <span className="level-count">{path.length} levels</span>
         </div>
-        <ol className="hierarchy-list">
-          {levels.map((item) => (
-            <li key={item.label}>
-              <span>{item.label}</span>
-              <strong>{item.name || 'Unassigned'}</strong>
+        <ol className="network-path">
+          {path.map((item, index) => (
+            <li key={item.label} className={index === path.length - 1 ? 'path-terminal' : undefined}>
+              <span className="path-index">{String(index + 1).padStart(2, '0')}</span>
+              <span className="path-label">{item.label}</span>
+              <strong title={item.name}>{item.name || 'Unassigned'}</strong>
               <code>{item.code || '—'}</code>
             </li>
           ))}
         </ol>
       </section>
 
-      <section className="detail-card consumption-card">
-        <div className="section-heading">
-          <div><p className="section-label">RECENT CONSUMPTION</p><h3>Energy readings</h3></div>
-          <div className="reading-total"><strong>{consumption.length}</strong><span>readings</span></div>
+      <section className="detail-section usage-section" aria-labelledby="usage-title">
+        <div className="section-title-line usage-title-line">
+          <div><p className="overline">METER READINGS</p><h3 id="usage-title">Recent consumption</h3></div>
+          <span className="reading-count">{readings.length.toLocaleString()} <small>records</small></span>
         </div>
-        {consumption.length > 1 && (
-          <div className="chart-wrap">
-            <svg viewBox="0 0 100 38" preserveAspectRatio="none" role="img" aria-label="Recent cumulative kilowatt-hour readings">
-              <line x1="0" y1="34" x2="100" y2="34" className="chart-axis" />
-              <polyline points={chartPoints(consumption)} className="chart-line" />
+        <div className="usage-summary">
+          <div><span>LATEST kWh</span><strong>{formatNumber(latest?.kwh)}</strong></div>
+          <div><span>LATEST kVAh</span><strong>{formatNumber(latest?.kvah)}</strong></div>
+          <div><span>VOLTAGE R</span><strong>{latest ? `${formatNumber(latest.voltR)} V` : '—'}</strong></div>
+        </div>
+        {readings.length > 1 && (
+          <div className="usage-chart">
+            <svg viewBox="0 0 100 38" preserveAspectRatio="none" role="img" aria-label="Recent meter kWh readings">
+              <path className="chart-fill" d={`M 0 35 L ${makeChartPoints(readings)} L 100 35 Z`} />
+              <polyline points={makeChartPoints(readings)} />
             </svg>
-            <div className="chart-caption"><span>Earlier</span><span>Latest · {latest?.timestamp}</span></div>
+            <div><span>Older</span><span>Latest: {latest?.timestamp}</span></div>
           </div>
         )}
-        <div className="table-container">
-          <table className="meter-table readings-table">
-            <thead><tr><th>Timestamp</th><th>kWh</th><th>kVAh</th><th>Voltage R</th></tr></thead>
+        <div className="reading-table-wrap">
+          <table className="reading-table">
+            <thead><tr><th scope="col">Timestamp</th><th scope="col">kWh</th><th scope="col">kVAh</th><th scope="col">Voltage R</th></tr></thead>
             <tbody>
-              {recentReadings.map((reading) => (
-                <tr key={reading.timestamp}>
-                  <td>{reading.timestamp}</td><td>{reading.kwh}</td><td>{reading.kvah}</td><td>{reading.voltR} V</td>
-                </tr>
+              {recent.map((reading) => (
+                <tr key={reading.timestamp}><td>{reading.timestamp}</td><td>{formatNumber(reading.kwh)}</td><td>{formatNumber(reading.kvah)}</td><td>{formatNumber(reading.voltR)} V</td></tr>
               ))}
             </tbody>
           </table>
-          {consumption.length === 0 && <p className="muted">No consumption readings are available.</p>}
+          {readings.length === 0 && <p className="unavailable-note">No consumption readings are available.</p>}
         </div>
-        <p className="data-note">Timestamps are shown exactly as provided by the portal; timezone is unspecified.</p>
+        <p className="timestamp-note">Timestamps are displayed as received. The portal does not include a timezone.</p>
       </section>
-    </section>
+    </div>
   );
 };

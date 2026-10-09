@@ -1,49 +1,43 @@
-# Urja Meter Ops protocol
+# Urja Meter Ops integration notes
 
-This note records the read-only behavior observed in the supplied Urja Meter Ops instance on 8 October 2026. Counts and sample values describe that instance at the time of observation and may change.
+## Scope
 
-## Investigation scope
+The take-home brief identifies the portal at `https://urja-ops.flockenergy.tech`, supplies an operator login, and states that the portal has no ready-made API. It asks the candidate to discover how the portal works and build a separate service around it.
 
-I used the supplied operator account to make ordinary HTTPS requests to the same routes used by the portal. I called the login, search, meter detail, location, consumption, and transformer-list routes. I did not call write or configuration routes, retrieve signing keys, or modify portal data. The portal is a SvelteKit application; its application data routes return JSON, so the service does not scrape rendered HTML for API results.
+This document describes the application's portal integration, recorded route behavior, and known data caveats. Live API verification is called out separately.
 
-## Authentication and sessions
+## Authentication
 
-Login is a SvelteKit form action rather than a conventional JSON login endpoint.
+The existing API implementation signs in with the portal's login form and keeps the resulting session cookie in process memory. It sends `URJA_EMAIL` and `URJA_PASSWORD` from the local environment. The base URL defaults to `https://urja-ops.flockenergy.tech` and can be overridden with `URJA_BASE_URL`.
 
-| Item | Observed behavior |
-| --- | --- |
-| Request | `POST /login` |
-| Body | URL-encoded `email` and `password` fields |
-| Required headers | `Accept: application/json`, `Content-Type: application/x-www-form-urlencoded`, `Origin`, `Referer`, and `x-sveltekit-action: true` |
-| HTTP response | `200 OK` |
-| Response body | `{"type":"redirect","status":303,"location":"/meters"}` |
-| Session | `__Secure-better-auth.session_token` cookie; `HttpOnly`, `Secure`, `SameSite=Lax`, `Path=/`, `Max-Age=3600` |
+The implementation notes record a URL-encoded `POST /login` form with `email` and `password` fields and the `x-sveltekit-action: true` header. The portal responds with a JSON-described redirect and a secure session cookie. The API shares an in-flight login across concurrent requests and performs one re-login attempt after an upstream `401` or `403`.
 
-The 303 is described in the JSON body; it is not the HTTP response status. Authenticated API calls need the session cookie. The service keeps it in memory, shares an in-flight login between concurrent requests, and retries once after an upstream 401 or 403. I observed the cookie lifetime, but did not wait for expiry to establish whether every expired session produces those statuses or whether the portal refreshes the cookie.
+Credentials belong in the ignored local `.env` file. Do not commit them or return them from API responses.
 
-## Routes and data
+## Recorded portal routes
 
-| Portal route | Method | Observed response and behavior |
+The application uses the following portal route mapping:
+
+| Portal route | Method | Data used by the service |
 | --- | --- | --- |
-| `/portal/meters/search?q=&page=1` | GET | `{data, total, page, pageSize}`. The observed instance had 403 meters and 20 records per page. Search is case-insensitive; `q=j1000` returned 100 matches. |
-| `/meters/{meterId}/__data.json?x-sveltekit-invalidated=001` | GET | SvelteKit indexed page data containing nameplate details and the meter's seven hierarchy labels. The service decodes this payload and normalizes legacy and v2 page shapes. |
-| `/portal/meters/{meterId}/geo` | GET | `{data: {latitude, longitude}}`; coordinate values are strings. |
-| `/portal/meters/{meterId}/energy` | GET | `{data: [{timestamp, kwh, kvah, voltR}, ...]}`; every field is a string. |
-| `/portal/dts?page=1` | GET | `{data, total, page, pageSize}` with transformer fields `code`, `name`, `feederCode`, and `capacityKva`. The observed instance had 40 transformers and 20 per page. |
+| `/portal/meters/search?q=&page=1` | GET | A paginated meter list, with `data`, `total`, `page`, and `pageSize` fields. |
+| `/meters/{meterId}/__data.json?x-sveltekit-invalidated=001` | GET | SvelteKit page data used to build the meter nameplate and network hierarchy. |
+| `/portal/meters/{meterId}/geo` | GET | Meter latitude and longitude. |
+| `/portal/meters/{meterId}/energy` | GET | Recent readings containing timestamp and energy/voltage values. |
+| `/portal/dts?page=1` | GET | A paginated list of distribution transformers. |
 
-Search pagination is one-based. On the observed instance, page 21 returned three meters and page 22 returned an empty `data` array while keeping `page: 22`. The portal normalized `page=0`, negative, and non-numeric values to page 1. Adding `pageSize=100` did not change the 20-record page size. The clean API validates page input instead of copying that surprising fallback behavior.
+These are portal routes used by the service, not the public routes exposed by this API. The public contract is in [openapi.json](./openapi.json).
 
-The detail route supports two observed data shapes. Legacy meters provide a list of label/value pairs. v2 meters provide a JSON string under `classData`, with an `installed_meter` object. The SvelteKit page-data response stores objects in an indexed graph; the service decodes that graph before mapping labels such as `Meter ID`/`MeterId` and `Installation Status`/`InstallationStatus` to one stable API shape.
+## Normalization and caveats
 
-The hierarchy contains zone, circle, division, subdivision, substation, feeder, and distribution transformer (DT). The portal supplies each as a display label such as `Jaipur Zone 1 (Z-01)`. The clean API splits the visible name and code into separate fields. Empty labels remain empty; the service does not infer missing values from neighboring meters.
+- Meter detail data has legacy and v2 shapes. The backend maps both into one nameplate response.
+- Network hierarchy levels are zone, circle, division, subdivision, substation, feeder, and distribution transformer.
+- Portal hierarchy labels may include a code in parentheses. The API separates the display name and code when it can; it does not infer missing values.
+- Location and consumption values may arrive as strings and are normalized by the API.
+- Recorded energy timestamps use `DD/MM/YYYY HH:mm` and have no timezone marker. The API preserves them as strings.
+- The API uses paginated requests and does not implement the portal's signed full-dataset export flow.
+- Authentication expiry, throttling, and long-term portal availability have not been fully characterized.
 
-For `J100000`, the energy route returned 337 readings from `23/06/2026 23:30` through `30/06/2026 23:30` in 30-minute steps. The readings use `DD/MM/YYYY HH:mm`; no timezone is included. Numeric strings are converted to JSON numbers by the clean API, while timestamps are preserved verbatim. The energy counters appear cumulative, but that interpretation and the timezone were not independently verified.
+## Local verification
 
-## Data caveats and limits
-
-- Counts, meter statuses, transformer names, and readings are snapshots, not a promised fixed dataset.
-- A meter may use either the legacy or v2 detail shape; the public API hides that distinction.
-- The timestamp timezone is unknown, so the service does not convert timestamps to ISO 8601.
-- The session expiry path has not been observed end-to-end; one retry on 401/403 is a bounded recovery policy.
-- The portal exposes an export action in its UI. Existing investigation notes indicate that route is signed. This service omits the export and signing-key flow; it uses paginated search and per-meter details instead.
-- No mutation routes were explored or implemented.
+On 9 October 2026, the local API returned HTTP 200 for the first meter search page when configured with the take-home portal login: 20 records were returned and the response reported 403 total records. These values are a snapshot and may change. This confirms the current client-to-API data path; it does not independently validate every raw portal route listed above.
